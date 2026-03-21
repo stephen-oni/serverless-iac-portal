@@ -1,0 +1,23 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Simple DynamoDB Table for User Registration Demo
+
+Resources:
+  # This creates the actual database table
+  UserRegistrationTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: UserDataDemo
+      AttributeDefinitions:
+        - AttributeName: "username"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "username"
+          KeyType: "HASH"
+      # This ensures you only pay for what you use (Free Tier friendly)
+      BillingMode: PAY_PER_REQUEST
+
+Outputs:
+  # This displays the Table Name in your AWS Console after it's done
+  TableName:
+    Description: The name of the DynamoDB table
+    Value: !Ref UserRegistrationTable
