@@ -1,12 +1,34 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CloudSphere Portal</title>
     <link rel="stylesheet" href="style.css">
-    <title>Cloud Portal</title>
 </head>
 <body>
+
     <div class="glass-card">
-        <h1>Cloud Registration</h1>
-        </div>
+        <h1>Cloud Entry</h1>
+        <p>Register your instance below</p>
+        
+        <form id="registrationForm">
+            <input type="text" id="username" placeholder="Username" required>
+            <input type="email" id="email" placeholder="Email Address" required>
+            <button type="submit">Deploy to AWS</button>
+        </form>
+        
+        <div id="responseMessage" style="margin-top: 15px; font-size: 0.9em;"></div>
+    </div>
+
+    <script>
+        // Placeholder for your AWS API Logic
+        const form = document.getElementById('registrationForm');
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            document.getElementById('responseMessage').innerText = "Connecting to Lambda...";
+            // You will paste your API Gateway URL here later!
+        });
+    </script>
 </body>
 </html>
