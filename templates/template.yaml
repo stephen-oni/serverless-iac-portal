@@ -1,23 +1,185 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Simple DynamoDB Table for User Registration Demo
+Description: 'Full Serverless Stack: API Gateway, Lambda, DynamoDB, and S3 Website Hosting'
+
+# ==========================================
+# PARAMETERS: Fully Dynamic Configuration
+# ==========================================
+Parameters:
+  MyWebsiteBucketName:
+    Type: String
+    Description: "Enter a GLOBALLY UNIQUE name for your S3 bucket. Lowercase, numbers, and hyphens only."
+    AllowedPattern: '^[a-z0-9-]+$'
+    ConstraintDescription: "ERROR: S3 Bucket names must contain only lowercase letters, numbers, and hyphens. No spaces or uppercase letters allowed."
+
+  MyTableName:
+    Type: String
+    Default: ServerlessContactDB
+    Description: "The name of your DynamoDB table."
+    
+  MyLambdaName:
+    Type: String
+    Default: ProcessContactForm
+    Description: "The name of your Lambda function."
+    
+  MyApiName:
+    Type: String
+    Default: ContactFormAPI
+    Description: "The name of your API Gateway."
 
 Resources:
-  # This creates the actual database table
-  UserRegistrationTable:
+  # 1. THE VAULT: DynamoDB Table
+  UsersTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: UserDataDemo
-      AttributeDefinitions:
-        - AttributeName: "username"
-          AttributeType: "S"
-      KeySchema:
-        - AttributeName: "username"
-          KeyType: "HASH"
-      # This ensures you only pay for what you use (Free Tier friendly)
+      TableName: !Ref MyTableName
       BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: Username
+          AttributeType: S
+      KeySchema:
+        - AttributeName: Username
+          KeyType: HASH
+
+  # 2. THE PASSPORT: IAM Role for Lambda
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBWriteAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt UsersTable.Arn
+
+  # 3. THE BRAIN: Lambda Function
+  ContactFormLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref MyLambdaName
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref UsersTable 
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          from botocore.exceptions import ClientError
+
+          TABLE_NAME = os.environ.get('TABLE_NAME')
+          dynamodb = boto3.resource('dynamodb')
+          table = dynamodb.Table(TABLE_NAME)
+
+          def lambda_handler(event, context):
+              try:
+                  body = json.loads(event.get('body', '{}'))
+                  username = body.get('username')
+                  name = body.get('name')
+                  password = body.get('password')
+
+                  if not username or not name or not password:
+                      return {'statusCode': 400, 'headers': {'Access-Control-Allow-Origin': '*'}, 'body': json.dumps({'error': 'Missing info!'})}
+
+                  try:
+                      table.put_item(
+                          Item={'Username': username, 'FullName': name, 'Password': password},
+                          ConditionExpression='attribute_not_exists(Username)'
+                      )
+                      return {'statusCode': 200, 'headers': {'Access-Control-Allow-Origin': '*'}, 'body': json.dumps({'message': f'Success! Welcome, {username}.'})}
+
+                  except ClientError as e:
+                      if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+                          return {'statusCode': 400, 'headers': {'Access-Control-Allow-Origin': '*'}, 'body': json.dumps({'error': f'Username "{username}" is taken.'})}
+                      else:
+                          raise e
+              except Exception as e:
+                  return {'statusCode': 500, 'headers': {'Access-Control-Allow-Origin': '*'}, 'body': json.dumps({'error': str(e)})}
+
+  # 4. THE RECEPTIONIST: API Gateway
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Ref MyApiName
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins: ['*']
+        AllowHeaders: ['Content-Type']
+        AllowMethods: ['POST', 'OPTIONS']
+
+  ApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt ContactFormLambda.Arn
+      PayloadFormatVersion: '2.0'
+
+  ApiRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'POST /submit'
+      Target: !Join ['/', ['integrations', !Ref ApiIntegration]]
+
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: '$default'
+      AutoDeploy: true
+
+  LambdaApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt ContactFormLambda.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Join ['', ['arn:aws:execute-api:', !Ref 'AWS::Region', ':', !Ref 'AWS::AccountId', ':', !Ref HttpApi, '/*/*']]
+
+  # 5. THE FRONT: S3 Static Website Hosting
+  WebsiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref MyWebsiteBucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      WebsiteConfiguration:
+        IndexDocument: index.html
+
+  WebsiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebsiteBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Join ['', ['arn:aws:s3:::', !Ref WebsiteBucket, '/*']]
 
 Outputs:
-  # This displays the Table Name in your AWS Console after it's done
-  TableName:
-    Description: The name of the DynamoDB table
-    Value: !Ref UserRegistrationTable
+  ApiURL:
+    Description: "Copy this URL into your index.html JavaScript!"
+    Value: !Join ['', [!GetAtt HttpApi.ApiEndpoint, '/submit']]
+    
+  WebsiteURL:
+    Description: "Your Live S3 Website URL!"
+    Value: !GetAtt WebsiteBucket.WebsiteURL
