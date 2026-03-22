@@ -1,4 +1,4 @@
-# 🌌 CloudSphere: Enterprise Serverless Portal
+# 🌌 A Serverless Portal
 > **A fully automated, zero-infrastructure web application powered by AWS Serverless and parameterized Infrastructure-as-Code.**
 
 ---
